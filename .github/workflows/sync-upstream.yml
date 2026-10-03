@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: sync-upstream
@@ -28,7 +29,7 @@ jobs:
           git remote add upstream https://github.com/maillab/cloud-mail.git
           git fetch upstream main
 
-      - name: 🔄 变基并推送 / Rebase onto upstream/main
+      - name: 🔄 合并上游 / Merge upstream/main
         id: sync
         run: |
           git config user.name "github-actions[bot]"
@@ -36,24 +37,44 @@ jobs:
 
           BEFORE=$(git rev-parse HEAD)
 
-          if git rebase upstream/main; then
+          if git merge upstream/main --no-edit; then
             AFTER=$(git rev-parse HEAD)
             if [ "$BEFORE" = "$AFTER" ]; then
               echo "✅ Already up to date with upstream/main."
               echo "changed=false" >> "$GITHUB_OUTPUT"
             else
-              git push origin main --force-with-lease
+              git push origin main
               echo "✅ Synced. Pushed $(git rev-parse --short HEAD) to main."
               echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "after_sha=$AFTER" >> "$GITHUB_OUTPUT"
             fi
           else
-            git rebase --abort
-            echo "::error::Rebase conflict with upstream. Manual intervention required."
+            git merge --abort
+            echo "::error::Merge conflict with upstream. Manual intervention required."
             exit 1
+          fi
+
+      - name: 🚀 确保部署已触发 / Ensure deploy is triggered
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          AFTER_SHA="${{ steps.sync.outputs.after_sha }}"
+          echo "Waiting for push-triggered deploy workflow..."
+          sleep 30
+
+          RUNS=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${AFTER_SHA}" --jq '.total_count // 0')
+          if [ "${RUNS}" -gt 0 ]; then
+            echo "✅ Deploy workflow already triggered by push (${RUNS} run(s))."
+          else
+            echo "⚠️ Push did not trigger deploy. Dispatching deploy workflow manually..."
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-cloudflare.yml/dispatches" \
+              -f ref=main
+            echo "✅ Deploy workflow dispatched."
           fi
 
       - name: 📣 完成提示 / Summary
         if: steps.sync.outputs.changed == 'true'
         run: |
           echo "Synced to upstream commit $(git rev-parse --short upstream/main)." >> "$GITHUB_STEP_SUMMARY"
-          echo "The deploy workflow (deploy-cloudflare.yml) will run automatically and apply database migrations via /api/init." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy workflow will build & deploy, then apply database migrations via /api/init (data preserved)." >> "$GITHUB_STEP_SUMMARY"
