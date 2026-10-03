@@ -45,3 +45,5 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 
 [build]
 command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"
+
+# local dev note: production domains = ["888591.xyz", "now.edu.kg", "icoub.com"] (deploy values come from GitHub Secrets)
