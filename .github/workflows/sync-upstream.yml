@@ -32,26 +32,44 @@ jobs:
       - name: 🔄 合并上游 / Merge upstream/main
         id: sync
         run: |
+          set -o pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           BEFORE=$(git rev-parse HEAD)
 
-          if git merge upstream/main --no-edit; then
-            AFTER=$(git rev-parse HEAD)
-            if [ "$BEFORE" = "$AFTER" ]; then
-              echo "✅ Already up to date with upstream/main."
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-            else
-              git push origin main
-              echo "✅ Synced. Pushed $(git rev-parse --short HEAD) to main."
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-              echo "after_sha=$AFTER" >> "$GITHUB_OUTPUT"
+          if ! git merge upstream/main --no-edit; then
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            echo "⚠️ 冲突文件："
+            echo "$CONFLICTS"
+
+            # 文档类文件（*.md / docs/）的排版、标点差异不应阻断自动同步：
+            # 这类冲突直接采用上游版本，保证同步链路持续可用。
+            CODE_CONFLICTS=$(echo "$CONFLICTS" | grep -vE '(^|/)README[^/]*\.md$|\.md$|^docs?/' || true)
+
+            if [ -n "$CODE_CONFLICTS" ]; then
+              git merge --abort
+              echo "::error::与上游存在代码冲突，需人工处理：$(echo "$CODE_CONFLICTS" | tr '\n' ' ')"
+              exit 1
             fi
+
+            for f in $CONFLICTS; do
+              git checkout --theirs -- "$f"
+              git add -- "$f"
+            done
+            git commit -m "chore(sync): auto-resolve doc conflicts by taking upstream version"
+            echo "✅ 已自动解决文档类冲突（采用上游版本）"
+          fi
+
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "✅ Already up to date with upstream/main."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git merge --abort
-            echo "::error::Merge conflict with upstream. Manual intervention required."
-            exit 1
+            git push origin main
+            echo "✅ Synced. Pushed $(git rev-parse --short HEAD) to main."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "after_sha=$AFTER" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 🚀 确保部署已触发 / Ensure deploy is triggered
