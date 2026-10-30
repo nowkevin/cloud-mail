@@ -23,6 +23,10 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # 若仓库配置了 SYNC_TOKEN（含 workflows 写权限的 PAT），则用它推送，
+          # 以便同步上游对 .github/workflows/ 的改动；未配置时回退到 GITHUB_TOKEN。
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: 📥 拉取上游 / Fetch upstream
         run: |
@@ -66,7 +70,10 @@ jobs:
             echo "✅ Already up to date with upstream/main."
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git push origin main
+            if ! git push origin main; then
+              echo "::error::推送被拒绝。若提示缺少 workflows 权限，说明本次合并包含上游对 .github/workflows/ 的改动；请在仓库 Secrets 中配置 SYNC_TOKEN（PAT，需 Contents 与 Workflows 读写权限）。"
+              exit 1
+            fi
             echo "✅ Synced. Pushed $(git rev-parse --short HEAD) to main."
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "after_sha=$AFTER" >> "$GITHUB_OUTPUT"
